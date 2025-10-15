@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="lt">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dievų Maistas – sandėlio sistema</title>
+<style>
+  :root{
+    --bg:#f6f7fb;--txt:#0f172a;--muted:#64748b;--line:#e5e7eb;--card:#fff;
+    --blue:#2563eb;--green:#16a34a;--red:#dc2626;--amber:#b45309
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  header{background:linear-gradient(180deg,#1e3a8a,#1e40af);color:#fff;padding:12px 16px;display:flex;gap:10px;align-items:center;position:sticky;top:0;z-index:10}
+  header .title{font-weight:800;font-size:18px;margin-right:auto}
+  header .right{display:flex;gap:8px;align-items:center}
+  header .pill{background:#ffffff26;border:1px solid #ffffff33;border-radius:999px;padding:6px 10px;font-weight:600}
+  header button{border:1px solid #ffffff33;background:#ffffff1a;color:#fff;border-radius:999px;padding:8px 12px;cursor:pointer}
+  .wrap{max-width:1180px;margin:18px auto;padding:0 16px;display:grid;gap:14px}
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .kpi .label{color:var(--muted);font-size:12px} .kpi .val{font-weight:800;font-size:22px}
+  .grid{display:grid;grid-template-columns:1.05fr .95fr;gap:14px} @media(max-width:980px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input,select,button{border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fff}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{background:#fff;border:0;border-right:1px solid var(--line);padding:8px 12px;cursor:pointer}
+  .seg button:last-child{border-right:0}
+  .seg button.active{background:#eef2ff;color:#1e3a8a;font-weight:700}
+  .status{border-radius:10px;padding:10px;font-weight:700;margin-top:10px;display:none}
+  .status.ok{background:#e9f9ee;border:1px solid #c9efd6;color:#136e33}
+  .status.err{background:#fdecec;border:1px solid #f6c7c7;color:#8c2323}
+  .log{max-height:200px;overflow:auto;font-family:ui-monospace,monospace;background:#f8fafc;border:1px dashed var(--line);border-radius:10px;padding:10px}
+  table{width:100%;border-collapse:collapse} th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;background:#fff}
+  thead th{position:sticky;top:0;background:#f8fafc;z-index:1}
+  .right{text-align:right} .qty{font-weight:800} .qty.zero{color:var(--red)} .qty.low{color:#b45309}
+  .btn-inc{background:#ecfdf5;border:1px solid #86efac;color:#166534;border-radius:999px;padding:6px 10px}
+  .btn-dec{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:999px;padding:6px 10px}
+  #toast{position:fixed;right:16px;bottom:16px;display:none;min-width:240px}
+  /* Password gate */
+  #gate{position:fixed;inset:0;background:linear-gradient(180deg,#111827,#1f2937);color:#fff;display:flex;align-items:center;justify-content:center;z-index:100}
+  #gate .box{background:#111827;border:1px solid #374151;border-radius:14px;padding:18px;width:min(92%,420px)}
+  #gate .box h1{margin:0 0 10px;font-size:18px}
+  #gate input{width:100%;background:#0b1220;color:#fff;border:1px solid #334155}
+  #gate .err{color:#fecaca;margin-top:8px;display:none}
+  .hint{font-size:12px;color:#64748b}
+  /* Alerts list */
+  .alert-item{border:1px dashed #fecaca;background:#fff5f5;color:#7f1d1d;border-radius:12px;padding:10px}
+</style>
+</head>
+<body>
+<!-- PASSWORD GATE (VISADA rodome, kol neįvedama / nepažymėta „Prisiminti“) -->
+<div id="gate">
+  <div class="box">
+    <h1>Prieiga: Dievų Maistas – sandėlio sistema</h1>
+    <p class="hint">Įveskite slaptažodį, kad tęstumėte.</p>
+    <input id="gatePass" type="password" placeholder="Slaptažodis" autocomplete="off">
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <label class="hint"><input type="checkbox" id="gateRemember"> Prisiminti 12 val.</label>
+      <button id="gateEnter" class="primary">Atrakinti</button>
+    </div>
+    <div id="gateErr" class="err">Neteisingas slaptažodis.</div>
+  </div>
+</div>
+
+<header>
+  <div class="title">Dievų Maistas – sandėlio sistema</div>
+  <div class="right">
+    <span class="pill" id="modePill">Režimas: <strong>PRIDĖTI</strong></span>
+    <span class="pill">Įspėjimai: <strong id="alertsCount">0</strong></span>
+    <button id="refreshBtn">Atnaujinti</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="kpis">
+    <div class="kpi"><div class="label">Prekių eilutės</div><div id="kpiRows" class="val">–</div></div>
+    <div class="kpi"><div class="label">0 likučio</div><div id="kpiZero" class="val">–</div></div>
+    <div class="kpi"><div class="label">≤5 likučio</div><div id="kpiLow" class="val">–</div></div>
+    <div class="kpi"><div class="label">Pask. veiksmas</div><div id="kpiLast" class="val">–</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3 style="margin:4px 0 10px">Skenavimo zona</h3>
+      <div class="row">
+        <div class="seg" id="modeSeg">
+          <button data-mode="add">PRIDĖTI (+1)</button>
+          <button data-mode="sub">ATIMTI (−1)</button>
+        </div>
+        <input id="scan" placeholder="Skenuoti čia" style="flex:1;min-width:260px" autocomplete="off" inputmode="numeric">
+        <button id="applyBtn" class="primary">Vykdyti (Enter)</button>
+      </div>
+      <div id="status" class="status"></div>
+      <p class="hint" style="margin-top:8px">Trumpiniai: „+“ / „-“ – keičia režimą</p>
+
+      <h3 style="margin:14px 0 8px">Paskutiniai veiksmai</h3>
+      <div id="log" class="log"></div>
+      <div class="row" style="margin-top:8px"><button id="clearLog">Išvalyti logą</button></div>
+
+      <h3 style="margin:18px 0 8px">Įspėjimai <span class="hint">(kaupiami automatiškai, skenavimas nenutrūksta)</span></h3>
+      <div id="alertsBox" class="log" style="background:#fff;max-height:220px"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="alertsMark" class="primary">Pažymėti visus kaip peržiūrėtus</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:4px 0 10px">Inventoriaus peržiūra</h3>
+      <div class="row" style="gap:8px;margin-bottom:8px">
+        <input id="search" placeholder="Paieška (pavadinimas / barkodas)" style="flex:1">
+        <div class="seg" id="filterSeg" aria-label="Filtras">
+          <button data-filter="all">Visi</button>
+          <button data-filter="eq0">=0</button>
+          <button data-filter="le5">≤5</button>
+          <button data-filter="gt5">&gt;5</button>
+        </div>
+      </div>
+      <div style="max-height:460px;overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:140px">Barkodas</th>
+              <th>Pavadinimas</th>
+              <th class="right" style="width:90px">Kiekis</th>
+              <th class="right" style="width:160px">Veiksmai</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+          </div>
+  </div>
+</div>
+
+<div id="toast" class="status" style="display:none"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getFirestore, collection, doc, getDocs, onSnapshot,
+    runTransaction, addDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // ======= KONFIGŪRA =======
+  const PASSWORD = "Dievumaistas852??"; // keisk čia, jei reikia
+  const REMEMBER_HOURS = 12;
+  const GATE_KEY = "dm_gate_ok_v2"; // naujas raktas, kad visada paprašytų pirmą kartą
+  const firebaseConfig = {
+    apiKey: "AIzaSyBjZa-R9kzJuk3y0jQwuMV8Sx6RQzrrctI",
+    authDomain: "dievu-maistas-sandelys.firebaseapp.com",
+    projectId: "dievu-maistas-sandelys",
+    storageBucket: "dievu-maistas-sandelys.firebasestorage.app",
+    messagingSenderId: "776669251161",
+    appId: "1:776669251161:web:1b558386f24cd6fa12d348"
+  };
+
+  // ======= APP =======
+  let app, db;
+  try{
+    app = initializeApp(firebaseConfig);
+    db  = getFirestore(app);
+  }catch(e){
+    console.error("Firebase init error:", e);
+    showErr("Nepavyko inicijuoti duomenų bazės: "+(e?.message||e));
+  }
+
+  // ===== Būsena + util'ai =====
+  let INVENTORY = []; // {barcode, name, qty}
+  let LOG = [];
+  let LAST_ACTION = '–';
+  let ALERTS = []; // {ts, text}
+  let MODE = localStorage.getItem("mode") || "add"; // add | sub
+  let FILTER = localStorage.getItem("filter") || "all"; // all | eq0 | le5 | gt5
+
+  const $ = s => document.querySelector(s);
+  const on = (el,ev,fn)=> el && el.addEventListener(ev,fn);
+  function toast(t,err){const el=$("#toast"); el.textContent=t; el.className='status '+(err?'err':'ok'); el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',1700);}
+  function showOK(text){const el=$("#status"); el.textContent=text; el.className='status ok'; el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',2000);}
+  function showErr(text){const el=$("#status"); el.textContent=text; el.className='status err'; el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(()=>el.style.display='none',3000);}
+
+  function renderKPI(){
+    const zero=INVENTORY.filter(x=>x.qty===0).length;
+    const low=INVENTORY.filter(x=>x.qty<=5).length;
+    $("#kpiRows").textContent=INVENTORY.length;
+    $("#kpiZero").textContent=zero;
+    $("#kpiLow").textContent=low;
+    $("#kpiLast").textContent=LAST_ACTION;
+  }
+  function applyFilter(items){
+    if(FILTER==="eq0") return items.filter(x=>x.qty===0);
+    if(FILTER==="le5") return items.filter(x=>x.qty<=5);
+    if(FILTER==="gt5") return items.filter(x=>x.qty>5);
+    return items;
+  }
+  function renderTable(){
+    const q=$("#search").value.trim().toLowerCase(), tb=$("#tbody"); tb.innerHTML='';
+    let rows = INVENTORY.filter(x=>!q || (x.name||'').toLowerCase().includes(q) || String(x.barcode).includes(q));
+    rows = applyFilter(rows);
+    rows.forEach(it=>{
+      const tr=document.createElement('tr');
+      const tdB=document.createElement('td'); tdB.textContent=it.barcode;
+      const tdN=document.createElement('td'); tdN.textContent=it.name||'';
+      const tdQ=document.createElement('td'); tdQ.className='right qty'; tdQ.textContent=it.qty;
+      if(it.qty===0) tdQ.classList.add('zero'); else if(it.qty<=5) tdQ.classList.add('low');
+      const tdA=document.createElement('td'); tdA.className='right';
+      const m=document.createElement('button'); m.className='btn-dec'; m.textContent='−1'; m.onclick=()=>applyScan(it.barcode,-1);
+      const p=document.createElement('button'); p.className='btn-inc'; p.textContent='+1'; p.onclick=()=>applyScan(it.barcode,+1);
+      tdA.append(m, document.createTextNode(' '), p);
+      tr.append(tdB,tdN,tdQ,tdA); tb.appendChild(tr);
+    });
+  }
+  function renderAll(){renderKPI(); renderTable();}
+  function pushLog(t){const tm=new Date().toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); LOG.unshift(`[${tm}] ${t}`); if(LOG.length>16) LOG.pop(); $("#log").innerHTML=LOG.map(x=>`<div>${x}</div>`).join('');}
+
+  // Įspėjimų renderis
+  function pushAlert(text){
+    const item = { ts: Date.now(), text };
+    ALERTS.unshift(item);
+    $("#alertsCount").textContent = ALERTS.length;
+    renderAlerts();
+  }
+  function renderAlerts(){
+    const box = $("#alertsBox");
+    if(!ALERTS.length){ box.innerHTML = '<div class="hint">Įspėjimų nėra.</div>'; return; }
+    box.innerHTML = ALERTS.map(a=>`<div class="alert-item">[${new Date(a.ts).toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${a.text}</div>`).join('');
+  }
+
+  // REAL-TIME
+  if(db){
+    onSnapshot(collection(db,'gerimai'), (snap)=>{
+      INVENTORY = snap.docs.map(d => ({ barcode:d.id, name:d.data().name||'', qty:Number(d.data().stock||0) }));
+      INVENTORY.sort((a,b)=> (a.name||'').localeCompare(b.name||'')); 
+      renderAll();
+    }, err => { console.error("onSnapshot error:", err); showErr('DB klaida: '+err.message); });
+  }
+
+  // TRANSAKCIJA SKENAVIMUI
+  async function applyScan(code, delta){
+    if(!db){ showErr("DB neprieinama"); return; }
+    const ref = doc(db,'gerimai',String(code));
+    try{
+      await runTransaction(db, async (tx)=>{
+        const s = await tx.get(ref);
+        if(!s.exists()) throw new Error('Barkodas nerastas: '+code);
+        const before = Number(s.data().stock||0);
+        let after  = before + delta;
+        if(after<0) after=0;
+        tx.update(ref,{ stock: after });
+        await addDoc(collection(db,'logs'), { ts: serverTimestamp(), code, delta, before, after });
+        LAST_ACTION = `${delta>0?'+':'−'}1 • ${(s.data().name||'')} • ${before} → ${after}`;
+        if(after===0 && before>0){
+          const msg = `„${(s.data().name||'Be pavadinimo')}“ (${code}) pasiekė 0 vnt. Rekomenduojama paslėpti svetainėje.`;
+          pushAlert(msg); // tik į sąrašą, jokio modal
+          // papildomai trumpas „toast“, bet netrukdo skenavimui
+          toast('Įspėjimas: 0 vnt', true);
+        }
+      });
+      showOK((MODE==='add'?'PRIDĖTA (+1)':'ATIMTA (−1)')+' • '+LAST_ACTION);
+      pushLog(LAST_ACTION);
+    }catch(e){
+      const err = e?.message || 'Klaida';
+      showErr(err); toast(err,true); pushLog('KLAIDA: '+err);
+    }
+  }
+
+  // UI
+  function setMode(m){
+    MODE = m; localStorage.setItem("mode",m);
+    $("#modePill").innerHTML = `Režimas: <strong>${m==='add'?'PRIDĖTI':'ATIMTI'}</strong>`;
+    [...document.querySelectorAll("#modeSeg button")].forEach(b=> b.classList.toggle("active", b.dataset.mode===m));
+  }
+  function setFilter(f){
+    FILTER = f; localStorage.setItem("filter",f);
+    [...document.querySelectorAll("#filterSeg button")].forEach(b=> b.classList.toggle("active", b.dataset.filter===f));
+    renderTable();
+  }
+
+  $("#applyBtn").onclick = ()=>{
+    const code=$("#scan").value.trim();
+    if(!code) return;
+    const delta = MODE==='sub' ? -1 : +1;
+    $("#scan").value=''; $("#scan").focus();
+    applyScan(code,delta);
+  };
+  on($("#scan"),'keydown', e=>{
+    if(e.key==='Enter'){ e.preventDefault(); $("#applyBtn").click(); }
+    if(e.key==='+'){ setMode('add'); }
+    if(e.key==='-'){ setMode('sub'); }
+  });
+  on($("#search"),'input', renderTable);
+  on($("#clearLog"),'click', ()=>{ LOG=[]; $("#log").innerHTML=''; });
+  on($("#refreshBtn"),'click', async ()=>{
+    if(!db) return showErr("DB neprieinama");
+    const snap=await getDocs(collection(db,'gerimai'));
+    INVENTORY=snap.docs.map(d=>({barcode:d.id,name:d.data().name||'',qty:Number(d.data().stock||0)}));
+    INVENTORY.sort((a,b)=>(a.name||'').localeCompare(b.name||'')); renderAll(); toast('Atnaujinta');
+  });
+  [...document.querySelectorAll("#modeSeg button")].forEach(b=> on(b,'click',()=> setMode(b.dataset.mode)));
+  [...document.querySelectorAll("#filterSeg button")].forEach(b=> on(b,'click',()=> setFilter(b.dataset.filter)));
+  on($("#alertsMark"), 'click', ()=>{ ALERTS=[]; $("#alertsCount").textContent='0'; renderAlerts(); });
+
+  setMode(MODE); setFilter(FILTER); renderAlerts();
+
+  // PASSWORD GATE logika (VISADA rodome, nebent „remember“ dar galioja)
+  const gate = $("#gate"), gatePass=$("#gatePass"), gateErr=$("#gateErr"), gateRemember=$("#gateRemember");
+  function rememberValid(){
+    const raw = localStorage.getItem(GATE_KEY);
+    if(!raw) return false;
+    try{
+      const {ts}=JSON.parse(raw); return (Date.now()-ts) < REMEMBER_HOURS*3600*1000;
+    }catch{ return false; }
+  }
+  function unlock(){
+    gate.style.display='none';
+    setTimeout(()=> $("#scan").focus(), 50);
+  }
+  function tryEnter(){
+    const v = gatePass.value;
+    if(v===PASSWORD){
+      if(gateRemember.checked){ localStorage.setItem(GATE_KEY, JSON.stringify({ts:Date.now()})); }
+      sessionStorage.setItem(GATE_KEY,"1"); // dabartinei sesijai
+      unlock(); toast('Sėkmingai prisijungta');
+    }else{
+      gateErr.style.display='block';
+      setTimeout(()=> gateErr.style.display='none', 1500);
+    }
+  }
+  if(rememberValid()){
+    gate.style.display='none';
+    setTimeout(()=> $("#scan").focus(), 80);
+  }else{
+    gate.style.display='flex';
+    setTimeout(()=> gatePass.focus(), 60);
+  }
+  on($("#gateEnter"),'click', tryEnter);
+  on(gatePass,'keydown', e=>{ if(e.key==='Enter') tryEnter(); });
+</script>
+</body>
+</html>
