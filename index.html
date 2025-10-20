@@ -47,6 +47,8 @@
   .hint{font-size:12px;color:#64748b}
   /* Alerts list */
   .alert-item{border:1px dashed #fecaca;background:#fff5f5;color:#7f1d1d;border-radius:12px;padding:10px}
+  /* NEW: kiekio įvedimo langelis Veiksmuose */
+  .qty-input{width:72px;text-align:right}
 </style>
 </head>
 <body>
@@ -124,13 +126,13 @@
               <th style="width:140px">Barkodas</th>
               <th>Pavadinimas</th>
               <th class="right" style="width:90px">Kiekis</th>
-              <th class="right" style="width:160px">Veiksmai</th>
+              <th class="right" style="width:260px">Veiksmai</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
-          </div>
+    </div>
   </div>
 </div>
 
@@ -194,6 +196,7 @@
     if(FILTER==="gt5") return items.filter(x=>x.qty>5);
     return items;
   }
+
   function renderTable(){
     const q=$("#search").value.trim().toLowerCase(), tb=$("#tbody"); tb.innerHTML='';
     let rows = INVENTORY.filter(x=>!q || (x.name||'').toLowerCase().includes(q) || String(x.barcode).includes(q));
@@ -205,12 +208,41 @@
       const tdQ=document.createElement('td'); tdQ.className='right qty'; tdQ.textContent=it.qty;
       if(it.qty===0) tdQ.classList.add('zero'); else if(it.qty<=5) tdQ.classList.add('low');
       const tdA=document.createElement('td'); tdA.className='right';
+
+      // -1 / +1 mygtukai
       const m=document.createElement('button'); m.className='btn-dec'; m.textContent='−1'; m.onclick=()=>applyScan(it.barcode,-1);
       const p=document.createElement('button'); p.className='btn-inc'; p.textContent='+1'; p.onclick=()=>applyScan(it.barcode,+1);
-      tdA.append(m, document.createTextNode(' '), p);
+
+      // NAUJA: kiekio įvedimas + "Keisti"
+      const inp=document.createElement('input');
+      inp.className='qty-input';
+      inp.placeholder='+/-';
+      inp.inputMode='numeric';
+      inp.title='Įveskite, pvz.: +100 arba -50';
+
+      const btn=document.createElement('button');
+      btn.textContent='Keisti';
+      btn.onclick=()=>{
+        const v = parseInt((inp.value||'').replace(',', '.'),10);
+        if(isNaN(v) || v===0){
+          toast('Įveskite ne 0 skaičių, pvz. +100 arba -50', true);
+          inp.focus();
+          return;
+        }
+        applyScan(it.barcode, v);
+        inp.value='';
+      };
+      inp.addEventListener('keydown', (e)=>{
+        if(e.key==='Enter'){ e.preventDefault(); btn.click(); }
+        if(e.key==='+'){ /* leidžiam ženklą */ }
+        if(e.key==='-'){ /* leidžiam ženklą */ }
+      });
+
+      tdA.append(m, document.createTextNode(' '), p, document.createTextNode(' '), inp, document.createTextNode(' '), btn);
       tr.append(tdB,tdN,tdQ,tdA); tb.appendChild(tr);
     });
   }
+
   function renderAll(){renderKPI(); renderTable();}
   function pushLog(t){const tm=new Date().toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); LOG.unshift(`[${tm}] ${t}`); if(LOG.length>16) LOG.pop(); $("#log").innerHTML=LOG.map(x=>`<div>${x}</div>`).join('');}
 
@@ -236,9 +268,11 @@
     }, err => { console.error("onSnapshot error:", err); showErr('DB klaida: '+err.message); });
   }
 
-  // TRANSAKCIJA SKENAVIMUI
+  // TRANSAKCIJA – palaiko bet kokį ±delta
   async function applyScan(code, delta){
     if(!db){ showErr("DB neprieinama"); return; }
+    if(!Number.isInteger(delta)){ showErr("Netinkamas kiekis"); return; }
+
     const ref = doc(db,'gerimai',String(code));
     try{
       await runTransaction(db, async (tx)=>{
@@ -249,15 +283,16 @@
         if(after<0) after=0;
         tx.update(ref,{ stock: after });
         await addDoc(collection(db,'logs'), { ts: serverTimestamp(), code, delta, before, after });
-        LAST_ACTION = `${delta>0?'+':'−'}1 • ${(s.data().name||'')} • ${before} → ${after}`;
+        const signed = (delta>0?`+${delta}`:`${delta}`);
+        LAST_ACTION = `${signed} • ${(s.data().name||'')} • ${before} → ${after}`;
         if(after===0 && before>0){
           const msg = `„${(s.data().name||'Be pavadinimo')}“ (${code}) pasiekė 0 vnt. Rekomenduojama paslėpti svetainėje.`;
-          pushAlert(msg); // tik į sąrašą, jokio modal
-          // papildomai trumpas „toast“, bet netrukdo skenavimui
+          pushAlert(msg);
           toast('Įspėjimas: 0 vnt', true);
         }
       });
-      showOK((MODE==='add'?'PRIDĖTA (+1)':'ATIMTA (−1)')+' • '+LAST_ACTION);
+      const lbl = delta>0 ? `PRIDĖTA (${delta>0?`+${delta}`:delta})` : `ATIMTA (${delta})`;
+      showOK(lbl+' • '+LAST_ACTION);
       pushLog(LAST_ACTION);
     }catch(e){
       const err = e?.message || 'Klaida';
@@ -303,7 +338,7 @@
 
   setMode(MODE); setFilter(FILTER); renderAlerts();
 
-  // PASSWORD GATE logika (VISADA rodome, nebent „remember“ dar galioja)
+  // PASSWORD GATE logika
   const gate = $("#gate"), gatePass=$("#gatePass"), gateErr=$("#gateErr"), gateRemember=$("#gateRemember");
   function rememberValid(){
     const raw = localStorage.getItem(GATE_KEY);
@@ -320,7 +355,7 @@
     const v = gatePass.value;
     if(v===PASSWORD){
       if(gateRemember.checked){ localStorage.setItem(GATE_KEY, JSON.stringify({ts:Date.now()})); }
-      sessionStorage.setItem(GATE_KEY,"1"); // dabartinei sesijai
+      sessionStorage.setItem(GATE_KEY,"1");
       unlock(); toast('Sėkmingai prisijungta');
     }else{
       gateErr.style.display='block';
