@@ -322,12 +322,14 @@
   // REAL-TIME
   if(db){
     onSnapshot(collection(db,'gerimai'), (snap)=>{
-      INVENTORY = snap.docs.map(d => ({ barcode:d.id, name:d.data().name||'', qty:Number(d.data().stock||0) }));
+      INVENTORY = snap.docs
+        .filter(d => d.id!=='__monthlySales')
+        .map(d => ({ barcode:d.id, name:d.data().name||'', qty:Number(d.data().stock||0) }));
       INVENTORY.sort((a,b)=> (a.name||'').localeCompare(b.name||'')); 
       renderAll();
     }, err => { console.error("onSnapshot error:", err); showErr('DB klaida: '+err.message); });
 
-    onSnapshot(doc(db,'settings','monthlySales'), (snap)=>{
+    onSnapshot(doc(db,'gerimai','__monthlySales'), (snap)=>{
       MONTHLY_SALES = snap.exists() ? {items:{}, ...snap.data()} : {items:{}, resetAt:null};
       renderSales();
     }, err => { console.error("monthlySales snapshot error:", err); showErr('Pardavimų statistikos klaida: '+err.message); });
@@ -339,7 +341,7 @@
     if(!Number.isInteger(delta)){ showErr("Netinkamas kiekis"); return; }
 
     const ref = doc(db,'gerimai',String(code));
-    const monthlyRef = doc(db,'settings','monthlySales');
+    const monthlyRef = doc(db,'gerimai','__monthlySales');
     try{
       await runTransaction(db, async (tx)=>{
         const s = await tx.get(ref);
@@ -410,7 +412,9 @@
   on($("#refreshBtn"),'click', async ()=>{
     if(!db) return showErr("DB neprieinama");
     const snap=await getDocs(collection(db,'gerimai'));
-    INVENTORY=snap.docs.map(d=>({barcode:d.id,name:d.data().name||'',qty:Number(d.data().stock||0)}));
+    INVENTORY=snap.docs
+      .filter(d=>d.id!=='__monthlySales')
+      .map(d=>({barcode:d.id,name:d.data().name||'',qty:Number(d.data().stock||0)}));
     INVENTORY.sort((a,b)=>(a.name||'').localeCompare(b.name||'')); renderAll(); toast('Atnaujinta');
   });
   [...document.querySelectorAll("#modeSeg button")].forEach(b=> on(b,'click',()=> setMode(b.dataset.mode)));
@@ -421,7 +425,7 @@
     if(!confirm('Ar tikrai pradėti naują mėnesį? Pardavimų skaičiai bus nunulinti, tačiau sandėlio likučiai nepasikeis.')) return;
     try{
       await runTransaction(db, async tx=>{
-        tx.set(doc(db,'settings','monthlySales'), {items:{}, resetAt:serverTimestamp()});
+        tx.set(doc(db,'gerimai','__monthlySales'), {items:{}, resetAt:serverTimestamp()});
       });
       toast('Pardavimų skaičiavimas pradėtas iš naujo');
     }catch(e){
