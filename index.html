@@ -49,6 +49,9 @@
   .alert-item{border:1px dashed #fecaca;background:#fff5f5;color:#7f1d1d;border-radius:12px;padding:10px}
   /* NEW: kiekio įvedimo langelis Veiksmuose */
   .qty-input{width:72px;text-align:right}
+  .sales-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .sales-total{font-size:18px;font-weight:800;color:var(--blue)}
+  .btn-reset{background:#fff7ed;border-color:#fdba74;color:#9a3412;font-weight:700}
 </style>
 </head>
 <body>
@@ -134,6 +137,31 @@
       </div>
     </div>
   </div>
+
+  <div class="card">
+    <div class="sales-head">
+      <div>
+        <h3 style="margin:0">Pardavimai nuo paskutinio nustatymo iš naujo</h3>
+        <div id="salesSince" class="hint">Skaičiavimo pradžia: –</div>
+      </div>
+      <div class="row">
+        <div class="sales-total">Iš viso: <span id="salesTotal">0</span> vnt.</div>
+        <button id="salesReset" class="btn-reset">Reset – pradėti naują mėnesį</button>
+      </div>
+    </div>
+    <div style="max-height:420px;overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Gėrimo pavadinimas</th>
+            <th style="width:160px">Barkodas</th>
+            <th class="right" style="width:150px">Išminusuota</th>
+          </tr>
+        </thead>
+        <tbody id="salesTbody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div id="toast" class="status" style="display:none"></div>
@@ -173,6 +201,7 @@
   let LOG = [];
   let LAST_ACTION = '–';
   let ALERTS = []; // {ts, text}
+  let MONTHLY_SALES = { items:{}, resetAt:null };
   let MODE = localStorage.getItem("mode") || "add"; // add | sub
   let FILTER = localStorage.getItem("filter") || "all"; // all | eq0 | le5 | gt5
 
@@ -244,6 +273,37 @@
   }
 
   function renderAll(){renderKPI(); renderTable();}
+
+  function renderSales(){
+    const tb = $("#salesTbody");
+    const rows = Object.entries(MONTHLY_SALES.items||{})
+      .map(([barcode, data])=>({
+        barcode,
+        name: data?.name || INVENTORY.find(x=>String(x.barcode)===String(barcode))?.name || 'Be pavadinimo',
+        qty: Number(data?.qty||0)
+      }))
+      .filter(x=>x.qty>0)
+      .sort((a,b)=>b.qty-a.qty || a.name.localeCompare(b.name,'lt'));
+
+    tb.innerHTML='';
+    if(!rows.length){
+      const tr=document.createElement('tr');
+      const td=document.createElement('td'); td.colSpan=3; td.className='hint'; td.textContent='Kol kas pardavimų neužfiksuota.';
+      tr.appendChild(td); tb.appendChild(tr);
+    }else{
+      rows.forEach(it=>{
+        const tr=document.createElement('tr');
+        const tdN=document.createElement('td'); tdN.textContent=it.name;
+        const tdB=document.createElement('td'); tdB.textContent=it.barcode;
+        const tdQ=document.createElement('td'); tdQ.className='right qty'; tdQ.textContent=it.qty;
+        tr.append(tdN,tdB,tdQ); tb.appendChild(tr);
+      });
+    }
+    $("#salesTotal").textContent=rows.reduce((sum,x)=>sum+x.qty,0);
+    const raw=MONTHLY_SALES.resetAt;
+    const date=raw?.toDate ? raw.toDate() : (raw ? new Date(raw) : null);
+    $("#salesSince").textContent='Skaičiavimo pradžia: '+(date && !isNaN(date) ? date.toLocaleString('lt-LT') : 'nuo pirmo pardavimo');
+  }
   function pushLog(t){const tm=new Date().toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); LOG.unshift(`[${tm}] ${t}`); if(LOG.length>16) LOG.pop(); $("#log").innerHTML=LOG.map(x=>`<div>${x}</div>`).join('');}
 
   // Įspėjimų renderis
@@ -266,6 +326,11 @@
       INVENTORY.sort((a,b)=> (a.name||'').localeCompare(b.name||'')); 
       renderAll();
     }, err => { console.error("onSnapshot error:", err); showErr('DB klaida: '+err.message); });
+
+    onSnapshot(doc(db,'settings','monthlySales'), (snap)=>{
+      MONTHLY_SALES = snap.exists() ? {items:{}, ...snap.data()} : {items:{}, resetAt:null};
+      renderSales();
+    }, err => { console.error("monthlySales snapshot error:", err); showErr('Pardavimų statistikos klaida: '+err.message); });
   }
 
   // TRANSAKCIJA – palaiko bet kokį ±delta
@@ -274,14 +339,30 @@
     if(!Number.isInteger(delta)){ showErr("Netinkamas kiekis"); return; }
 
     const ref = doc(db,'gerimai',String(code));
+    const monthlyRef = doc(db,'settings','monthlySales');
     try{
       await runTransaction(db, async (tx)=>{
         const s = await tx.get(ref);
         if(!s.exists()) throw new Error('Barkodas nerastas: '+code);
+        const monthlySnap = await tx.get(monthlyRef);
         const before = Number(s.data().stock||0);
         let after  = before + delta;
         if(after<0) after=0;
         tx.update(ref,{ stock: after });
+        const removed = Math.max(0, before-after);
+        if(removed>0){
+          const monthly = monthlySnap.exists() ? monthlySnap.data() : {};
+          const items = {...(monthly.items||{})};
+          const old = items[String(code)] || {};
+          items[String(code)] = {
+            name: s.data().name||'Be pavadinimo',
+            qty: Number(old.qty||0)+removed
+          };
+          tx.set(monthlyRef, {
+            items,
+            resetAt: monthly.resetAt || serverTimestamp()
+          }, {merge:true});
+        }
         await addDoc(collection(db,'logs'), { ts: serverTimestamp(), code, delta, before, after });
         const signed = (delta>0?`+${delta}`:`${delta}`);
         LAST_ACTION = `${signed} • ${(s.data().name||'')} • ${before} → ${after}`;
@@ -335,6 +416,18 @@
   [...document.querySelectorAll("#modeSeg button")].forEach(b=> on(b,'click',()=> setMode(b.dataset.mode)));
   [...document.querySelectorAll("#filterSeg button")].forEach(b=> on(b,'click',()=> setFilter(b.dataset.filter)));
   on($("#alertsMark"), 'click', ()=>{ ALERTS=[]; $("#alertsCount").textContent='0'; renderAlerts(); });
+  on($("#salesReset"), 'click', async ()=>{
+    if(!db) return showErr('DB neprieinama');
+    if(!confirm('Ar tikrai pradėti naują mėnesį? Pardavimų skaičiai bus nunulinti, tačiau sandėlio likučiai nepasikeis.')) return;
+    try{
+      await runTransaction(db, async tx=>{
+        tx.set(doc(db,'settings','monthlySales'), {items:{}, resetAt:serverTimestamp()});
+      });
+      toast('Pardavimų skaičiavimas pradėtas iš naujo');
+    }catch(e){
+      showErr('Nepavyko nunulinti statistikos: '+(e?.message||e));
+    }
+  });
 
   setMode(MODE); setFilter(FILTER); renderAlerts();
 
