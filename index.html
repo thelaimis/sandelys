@@ -62,7 +62,7 @@
     <p class="hint">Įveskite slaptažodį, kad tęstumėte.</p>
     <input id="gatePass" type="password" placeholder="Slaptažodis" autocomplete="off">
     <div class="row" style="margin-top:10px;justify-content:space-between">
-      <label class="hint"><input type="checkbox" id="gateRemember"> Prisiminti 12 val.</label>
+      <label class="hint"><input type="checkbox" id="gateRemember"> Prisiminti šiame įrenginyje</label>
       <button id="gateEnter" class="primary">Atrakinti</button>
     </div>
     <div id="gateErr" class="err">Neteisingas slaptažodis.</div>
@@ -172,11 +172,13 @@
     getFirestore, collection, doc, getDocs, onSnapshot,
     runTransaction, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import {
+    getAuth, signInWithEmailAndPassword, onAuthStateChanged,
+    setPersistence, browserLocalPersistence, browserSessionPersistence
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ======= KONFIGŪRA =======
-  const PASSWORD = "Dievumaistas852??"; // keisk čia, jei reikia
-  const REMEMBER_HOURS = 12;
-  const GATE_KEY = "dm_gate_ok_v2"; // naujas raktas, kad visada paprašytų pirmą kartą
+  const LOGIN_EMAIL = "dievumaistas09@gmail.com";
   const firebaseConfig = {
     apiKey: "AIzaSyBjZa-R9kzJuk3y0jQwuMV8Sx6RQzrrctI",
     authDomain: "dievu-maistas-sandelys.firebaseapp.com",
@@ -187,10 +189,11 @@
   };
 
   // ======= APP =======
-  let app, db;
+  let app, db, auth;
   try{
     app = initializeApp(firebaseConfig);
     db  = getFirestore(app);
+    auth = getAuth(app);
   }catch(e){
     console.error("Firebase init error:", e);
     showErr("Nepavyko inicijuoti duomenų bazės: "+(e?.message||e));
@@ -319,8 +322,11 @@
     box.innerHTML = ALERTS.map(a=>`<div class="alert-item">[${new Date(a.ts).toLocaleTimeString('lt-LT',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${a.text}</div>`).join('');
   }
 
-  // REAL-TIME
-  if(db){
+  // REAL-TIME – paleidžiama tik prisijungus
+  let realtimeStarted = false;
+  function startRealtime(){
+    if(!db || realtimeStarted) return;
+    realtimeStarted = true;
     onSnapshot(collection(db,'gerimai'), (snap)=>{
       INVENTORY = snap.docs
         .filter(d => d.id!=='__monthlySales')
@@ -434,37 +440,40 @@
 
   setMode(MODE); setFilter(FILTER); renderAlerts();
 
-  // PASSWORD GATE logika
+  // FIREBASE AUTH prisijungimas – HTML faile slaptažodis nesaugomas
   const gate = $("#gate"), gatePass=$("#gatePass"), gateErr=$("#gateErr"), gateRemember=$("#gateRemember");
-  function rememberValid(){
-    const raw = localStorage.getItem(GATE_KEY);
-    if(!raw) return false;
-    try{
-      const {ts}=JSON.parse(raw); return (Date.now()-ts) < REMEMBER_HOURS*3600*1000;
-    }catch{ return false; }
-  }
   function unlock(){
     gate.style.display='none';
     setTimeout(()=> $("#scan").focus(), 50);
   }
-  function tryEnter(){
-    const v = gatePass.value;
-    if(v===PASSWORD){
-      if(gateRemember.checked){ localStorage.setItem(GATE_KEY, JSON.stringify({ts:Date.now()})); }
-      sessionStorage.setItem(GATE_KEY,"1");
-      unlock(); toast('Sėkmingai prisijungta');
-    }else{
+  async function tryEnter(){
+    const password = gatePass.value;
+    if(!password) return;
+    const btn = $("#gateEnter");
+    btn.disabled = true;
+    gateErr.style.display='none';
+    try{
+      await setPersistence(auth, gateRemember.checked ? browserLocalPersistence : browserSessionPersistence);
+      await signInWithEmailAndPassword(auth, LOGIN_EMAIL, password);
+      gatePass.value='';
+      toast('Sėkmingai prisijungta');
+    }catch(e){
+      console.error('Prisijungimo klaida:', e);
       gateErr.style.display='block';
       setTimeout(()=> gateErr.style.display='none', 1500);
+    }finally{
+      btn.disabled = false;
     }
   }
-  if(rememberValid()){
-    gate.style.display='none';
-    setTimeout(()=> $("#scan").focus(), 80);
-  }else{
-    gate.style.display='flex';
-    setTimeout(()=> gatePass.focus(), 60);
-  }
+  onAuthStateChanged(auth, user=>{
+    if(user){
+      startRealtime();
+      unlock();
+    }else{
+      gate.style.display='flex';
+      setTimeout(()=> gatePass.focus(), 60);
+    }
+  });
   on($("#gateEnter"),'click', tryEnter);
   on(gatePass,'keydown', e=>{ if(e.key==='Enter') tryEnter(); });
 </script>
