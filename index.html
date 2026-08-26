@@ -170,7 +170,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import {
     getFirestore, collection, doc, getDocs, onSnapshot,
-    runTransaction, addDoc, serverTimestamp
+    runTransaction, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   // ======= KONFIGŪRA =======
@@ -365,7 +365,6 @@
             resetAt: monthly.resetAt || serverTimestamp()
           }, {merge:true});
         }
-        await addDoc(collection(db,'logs'), { ts: serverTimestamp(), code, delta, before, after });
         const signed = (delta>0?`+${delta}`:`${delta}`);
         LAST_ACTION = `${signed} • ${(s.data().name||'')} • ${before} → ${after}`;
         if(after===0 && before>0){
